@@ -172,8 +172,11 @@ const Chart = ({ data, atrData, signals }) => {
 
       if (param.time !== undefined) {
         const dataPoint = param.seriesData.get(candlestickSeries);
+        const atrPoint = param.seriesData.get(atrSeries);
         if (dataPoint) {
-          atrChart.setCrosshairPosition(dataPoint.close, param.time, atrSeries);
+          // Use ATR value if available, otherwise use close price for positioning
+          const priceForPosition = atrPoint?.value ?? dataPoint.close;
+          atrChart.setCrosshairPosition(priceForPosition, param.time, atrSeries);
         }
       } else {
         atrChart.clearCrosshairPosition();
@@ -187,9 +190,12 @@ const Chart = ({ data, atrData, signals }) => {
       isSyncing = true;
 
       if (param.time !== undefined) {
-        const dataPoint = param.seriesData.get(atrSeries);
-        if (dataPoint) {
-          mainChart.setCrosshairPosition(dataPoint.value, param.time, candlestickSeries);
+        const atrPoint = param.seriesData.get(atrSeries);
+        if (atrPoint?.value !== undefined) {
+          mainChart.setCrosshairPosition(atrPoint.value, param.time, candlestickSeries);
+        } else {
+          // If no ATR value at this time, still sync crosshair position using time
+          mainChart.setCrosshairPosition(0, param.time, candlestickSeries);
         }
       } else {
         mainChart.clearCrosshairPosition();
@@ -238,15 +244,26 @@ const Chart = ({ data, atrData, signals }) => {
     // Set candlestick data
     candlestickSeriesRef.current.setData(data);
 
-    // Set ATR data directly - alignment handled by time-based sync
-    atrSeriesRef.current.setData(atrData);
+    // Create ATR lookup map by timestamp
+    const atrMap = new Map(atrData.map(d => [d.time, d.value]));
 
-    // Scroll to show most recent data
+    // Pad ATR data to match candlestick timestamps for proper alignment
+    // Use whitespace data format for bars without ATR values
+    const alignedAtrData = data.map(candle => {
+      const atrValue = atrMap.get(candle.time);
+      if (atrValue !== undefined) {
+        return { time: candle.time, value: atrValue };
+      } else {
+        // Whitespace data - just time, no value (creates gap in line)
+        return { time: candle.time };
+      }
+    });
+
+    atrSeriesRef.current.setData(alignedAtrData);
+
+    // Scroll to show most recent data (right-aligned)
     if (mainChartRef.current && atrChartRef.current) {
-      // Use fitContent first to ensure proper initialization
-      mainChartRef.current.timeScale().fitContent();
-
-      // Then scroll to right side showing last 100 bars
+      // Show last 100 bars
       setTimeout(() => {
         try {
           const barsToShow = 100;
