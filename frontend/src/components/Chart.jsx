@@ -223,8 +223,48 @@ const Chart = ({ data, atrData, signals }) => {
     window.addEventListener('resize', handleResize);
     handleResize();
 
+    // Price scale wheel zoom handler
+    const PRICE_SCALE_WIDTH = 60; // Approximate width of price scale area
+
+    const createPriceScaleWheelHandler = (container, chart) => {
+      return (e) => {
+        const rect = container.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const containerWidth = rect.width;
+
+        // Check if mouse is in the price scale area (rightmost pixels)
+        if (x > containerWidth - PRICE_SCALE_WIDTH) {
+          e.preventDefault();
+          e.stopPropagation();
+
+          const currentOptions = chart.priceScale('right').options();
+          const currentTop = currentOptions.scaleMargins?.top ?? 0.1;
+          const currentBottom = currentOptions.scaleMargins?.bottom ?? 0.1;
+
+          // Zoom factor based on wheel direction
+          const zoomFactor = e.deltaY > 0 ? 0.05 : -0.05;
+
+          // Calculate new margins (smaller margins = more zoom)
+          const newTop = Math.max(0.01, Math.min(0.45, currentTop + zoomFactor));
+          const newBottom = Math.max(0.01, Math.min(0.45, currentBottom + zoomFactor));
+
+          chart.priceScale('right').applyOptions({
+            scaleMargins: { top: newTop, bottom: newBottom },
+          });
+        }
+      };
+    };
+
+    const mainWheelHandler = createPriceScaleWheelHandler(mainChartContainerRef.current, mainChart);
+    const atrWheelHandler = createPriceScaleWheelHandler(atrChartContainerRef.current, atrChart);
+
+    mainChartContainerRef.current.addEventListener('wheel', mainWheelHandler, { passive: false });
+    atrChartContainerRef.current.addEventListener('wheel', atrWheelHandler, { passive: false });
+
     return () => {
       window.removeEventListener('resize', handleResize);
+      mainChartContainerRef.current?.removeEventListener('wheel', mainWheelHandler);
+      atrChartContainerRef.current?.removeEventListener('wheel', atrWheelHandler);
       if (mainChartRef.current) {
         mainChartRef.current.remove();
         mainChartRef.current = null;
