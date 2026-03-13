@@ -11,6 +11,10 @@ const Chart = ({ data, atrData, signals }) => {
   const priceLineRef = useRef(null);
   const [lineValue, setLineValue] = useState(null);
   const isDraggingLineRef = useRef(false);
+  const mainValueByTimeRef = useRef(new Map());
+  const atrValueByTimeRef = useRef(new Map());
+
+  const RIGHT_SCALE_INTERACTION_WIDTH = 80;
 
   // Initialize charts
   useEffect(() => {
@@ -46,6 +50,7 @@ const Chart = ({ data, atrData, signals }) => {
       rightPriceScale: {
         borderColor: '#2a2e39',
         scaleMargins: { top: 0.1, bottom: 0.1 },
+        minimumWidth: RIGHT_SCALE_INTERACTION_WIDTH,
       },
       timeScale: {
         borderColor: '#2a2e39',
@@ -136,14 +141,15 @@ const Chart = ({ data, atrData, signals }) => {
     candlestickSeriesRef.current = candlestickSeries;
     atrSeriesRef.current = atrSeries;
 
-    // Sync time scales - simple logical range sync with error handling
+    // Sync time scales by visible time range (instead of logical index)
+    // to keep panes aligned even when ATR has fewer early data points.
     let isSyncingTimeScale = false;
 
-    mainChart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+    mainChart.timeScale().subscribeVisibleTimeRangeChange((range) => {
       if (isSyncingTimeScale || !range || isDraggingLineRef.current) return;
       try {
         isSyncingTimeScale = true;
-        atrChart.timeScale().setVisibleLogicalRange(range);
+        atrChart.timeScale().setVisibleRange(range);
       } catch (e) {
         console.warn('Sync error:', e);
       } finally {
@@ -151,11 +157,11 @@ const Chart = ({ data, atrData, signals }) => {
       }
     });
 
-    atrChart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+    atrChart.timeScale().subscribeVisibleTimeRangeChange((range) => {
       if (isSyncingTimeScale || !range || isDraggingLineRef.current) return;
       try {
         isSyncingTimeScale = true;
-        mainChart.timeScale().setVisibleLogicalRange(range);
+        mainChart.timeScale().setVisibleRange(range);
       } catch (e) {
         console.warn('Sync error:', e);
       } finally {
@@ -171,9 +177,11 @@ const Chart = ({ data, atrData, signals }) => {
       isSyncing = true;
 
       if (param.time !== undefined) {
-        const dataPoint = param.seriesData.get(candlestickSeries);
-        if (dataPoint) {
-          atrChart.setCrosshairPosition(dataPoint.close, param.time, atrSeries);
+        const atrValue = atrValueByTimeRef.current.get(param.time);
+        if (atrValue !== undefined) {
+          atrChart.setCrosshairPosition(atrValue, param.time, atrSeries);
+        } else {
+          atrChart.clearCrosshairPosition();
         }
       } else {
         atrChart.clearCrosshairPosition();
@@ -187,9 +195,11 @@ const Chart = ({ data, atrData, signals }) => {
       isSyncing = true;
 
       if (param.time !== undefined) {
-        const dataPoint = param.seriesData.get(atrSeries);
-        if (dataPoint) {
-          mainChart.setCrosshairPosition(dataPoint.value, param.time, candlestickSeries);
+        const closeValue = mainValueByTimeRef.current.get(param.time);
+        if (closeValue !== undefined) {
+          mainChart.setCrosshairPosition(closeValue, param.time, candlestickSeries);
+        } else {
+          mainChart.clearCrosshairPosition();
         }
       } else {
         mainChart.clearCrosshairPosition();
@@ -217,8 +227,56 @@ const Chart = ({ data, atrData, signals }) => {
     window.addEventListener('resize', handleResize);
     handleResize();
 
+    // TradingView-like wheel interaction on right value scale:
+    // wheel behaves like dragging the scale up/down while cursor is inside this area.
+    const simulateAxisDragWithWheel = (event, container) => {
+      if (!container) return;
+      const rect = container.getBoundingClientRect();
+      const isOnRightScale = event.clientX >= rect.right - RIGHT_SCALE_INTERACTION_WIDTH;
+      if (!isOnRightScale) return;
+
+      event.preventDefault();
+
+      const target = container.querySelector('canvas') || container;
+      const dragDelta = Math.sign(event.deltaY) * 18;
+
+      target.dispatchEvent(new MouseEvent('mousedown', {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        clientX: event.clientX,
+        clientY: event.clientY,
+        buttons: 1,
+      }));
+
+      document.dispatchEvent(new MouseEvent('mousemove', {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        clientX: event.clientX,
+        clientY: event.clientY + dragDelta,
+        buttons: 1,
+      }));
+
+      document.dispatchEvent(new MouseEvent('mouseup', {
+        bubbles: true,
+        cancelable: true,
+        view: window,
+        clientX: event.clientX,
+        clientY: event.clientY + dragDelta,
+      }));
+    };
+
+    const mainWheelHandler = (event) => simulateAxisDragWithWheel(event, mainChartContainerRef.current);
+    const atrWheelHandler = (event) => simulateAxisDragWithWheel(event, atrChartContainerRef.current);
+
+    mainChartContainerRef.current.addEventListener('wheel', mainWheelHandler, { passive: false });
+    atrChartContainerRef.current.addEventListener('wheel', atrWheelHandler, { passive: false });
+
     return () => {
       window.removeEventListener('resize', handleResize);
+      mainChartContainerRef.current?.removeEventListener('wheel', mainWheelHandler);
+      atrChartContainerRef.current?.removeEventListener('wheel', atrWheelHandler);
       if (mainChartRef.current) {
         mainChartRef.current.remove();
         mainChartRef.current = null;
@@ -235,6 +293,10 @@ const Chart = ({ data, atrData, signals }) => {
     if (!candlestickSeriesRef.current || !atrSeriesRef.current) return;
     if (!data || data.length === 0 || !atrData || atrData.length === 0) return;
 
+    // Keep lookup maps for precise crosshair sync by timestamp.
+    mainValueByTimeRef.current = new Map(data.map((item) => [item.time, item.close]));
+    atrValueByTimeRef.current = new Map(atrData.map((item) => [item.time, item.value]));
+
     // Set candlestick data
     candlestickSeriesRef.current.setData(data);
 
@@ -246,16 +308,20 @@ const Chart = ({ data, atrData, signals }) => {
       // Use fitContent first to ensure proper initialization
       mainChartRef.current.timeScale().fitContent();
 
-      // Then scroll to right side showing last 100 bars
+      // Then scroll to right side showing last 100 bars based on timestamps
       setTimeout(() => {
         try {
           const barsToShow = 100;
           const from = Math.max(0, data.length - barsToShow);
-          const to = data.length + 5;
-          const range = { from, to };
+          const range = {
+            from: data[from]?.time,
+            to: data[data.length - 1]?.time,
+          };
 
-          mainChartRef.current?.timeScale().setVisibleLogicalRange(range);
-          atrChartRef.current?.timeScale().setVisibleLogicalRange(range);
+          if (range.from && range.to) {
+            mainChartRef.current?.timeScale().setVisibleRange(range);
+            atrChartRef.current?.timeScale().setVisibleRange(range);
+          }
         } catch (e) {
           console.warn('Range error:', e);
         }
