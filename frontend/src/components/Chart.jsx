@@ -354,17 +354,16 @@ const Chart = ({ data, atrData, signals }) => {
       if (!priceLineRef.current || !atrSeriesRef.current) return;
 
       const rect = container.getBoundingClientRect();
-      // Check if click is inside ATR container
-      if (e.clientX < rect.left || e.clientX > rect.right ||
-          e.clientY < rect.top || e.clientY > rect.bottom) {
-        return;
-      }
-
       const y = e.clientY - rect.top;
       const currentPrice = priceLineRef.current.options().price;
       const priceCoord = atrSeriesRef.current.priceToCoordinate(currentPrice);
 
-      if (priceCoord !== null && Math.abs(y - priceCoord) < 15) {
+      if (priceCoord !== null && Math.abs(y - priceCoord) < 10) {
+        // Prevent chart from also handling this event
+        e.preventDefault();
+        e.stopPropagation();
+        e.stopImmediatePropagation();
+
         isDragging = true;
         startY = e.clientY;
         isDraggingLineRef.current = true;
@@ -396,13 +395,13 @@ const Chart = ({ data, atrData, signals }) => {
       }
     };
 
-    // Use document-level listeners to avoid interfering with chart events
-    document.addEventListener('mousedown', handleMouseDown);
+    // Use capture phase for mousedown to intercept before chart handles it
+    container.addEventListener('mousedown', handleMouseDown, { capture: true });
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', handleMouseUp);
 
     return () => {
-      document.removeEventListener('mousedown', handleMouseDown);
+      container.removeEventListener('mousedown', handleMouseDown, { capture: true });
       document.removeEventListener('mousemove', handleMouseMove);
       document.removeEventListener('mouseup', handleMouseUp);
     };
