@@ -7,8 +7,8 @@ import pandas as pd
 import numpy as np
 from dataclasses import dataclass, field
 from typing import Optional
-from strategy import ATRBreakoutStrategy, Signal, PositionType, Trade
-from indicators import add_indicators
+from strategy import ATRBreakoutStrategy, KeltnerMeanReversionStrategy, Signal, PositionType, Trade, create_strategy
+from indicators import add_indicators, add_indicators_s2
 
 
 @dataclass
@@ -30,6 +30,8 @@ class BacktestEngine:
     def __init__(
         self,
         initial_capital: float = 100000,
+        strategy_type: str = "s1",
+        # S1 specific parameters
         atr_period: int = 14,
         breakout_period: int = 20,
         entry_multiplier: float = 0.5,
@@ -38,18 +40,53 @@ class BacktestEngine:
         leverage: int = 10,
         risk_per_trade: float = 0.02,
         spread: float = 0.04,
+        # S2 specific parameters
+        kc_basis_period: int = 20,
+        kc_mult: float = 2.0,
+        profit_mode: str = "to_basis",
+        big_stop_multiplier: float = 0,
+        max_hold_bars: int = 100,
+        trend_filter_period: int = 100,
+        vol_lookback: int = 200,
+        vol_ratio_max: float = 1.0,
+        max_consecutive_losses: int = 3,
+        cooldown_bars: int = 5,
     ):
         self.initial_capital = initial_capital
-        self.strategy = ATRBreakoutStrategy(
-            atr_period=atr_period,
-            breakout_period=breakout_period,
-            entry_multiplier=entry_multiplier,
-            stop_multiplier=stop_multiplier,
-            profit_multiplier=profit_multiplier,
-            leverage=leverage,
-            risk_per_trade=risk_per_trade,
-            spread=spread,
-        )
+        self.strategy_type = strategy_type.lower()
+
+        if self.strategy_type == "s1":
+            self.strategy = ATRBreakoutStrategy(
+                atr_period=atr_period,
+                breakout_period=breakout_period,
+                entry_multiplier=entry_multiplier,
+                stop_multiplier=stop_multiplier,
+                profit_multiplier=profit_multiplier,
+                leverage=leverage,
+                risk_per_trade=risk_per_trade,
+                spread=spread,
+            )
+        elif self.strategy_type == "s2":
+            self.strategy = KeltnerMeanReversionStrategy(
+                atr_period=atr_period,
+                kc_basis_period=kc_basis_period,
+                kc_mult=kc_mult,
+                stop_multiplier=stop_multiplier,
+                profit_multiplier=profit_multiplier,
+                profit_mode=profit_mode,
+                big_stop_multiplier=big_stop_multiplier,
+                max_hold_bars=max_hold_bars,
+                trend_filter_period=trend_filter_period,
+                vol_lookback=vol_lookback,
+                vol_ratio_max=vol_ratio_max,
+                max_consecutive_losses=max_consecutive_losses,
+                cooldown_bars=cooldown_bars,
+                leverage=leverage,
+                risk_per_trade=risk_per_trade,
+                spread=spread,
+            )
+        else:
+            raise ValueError(f"Unknown strategy type: {strategy_type}")
 
     def run(self, df: pd.DataFrame) -> BacktestResult:
         """
@@ -61,12 +98,24 @@ class BacktestEngine:
         Returns:
             BacktestResult with all metrics and data
         """
-        # Add indicators
-        df_with_indicators = add_indicators(
-            df,
-            atr_period=self.strategy.atr_period,
-            breakout_period=self.strategy.breakout_period
-        )
+        # Add indicators based on strategy type
+        if self.strategy_type == "s1":
+            df_with_indicators = add_indicators(
+                df,
+                atr_period=self.strategy.atr_period,
+                breakout_period=self.strategy.breakout_period
+            )
+        elif self.strategy_type == "s2":
+            df_with_indicators = add_indicators_s2(
+                df,
+                atr_period=self.strategy.atr_period,
+                kc_basis_period=self.strategy.kc_basis_period,
+                kc_mult=self.strategy.kc_mult,
+                trend_filter_period=self.strategy.trend_filter_period,
+                vol_lookback=self.strategy.vol_lookback
+            )
+        else:
+            df_with_indicators = add_indicators(df)
 
         # Generate signals
         df_with_signals, signals = self.strategy.generate_signals(df_with_indicators)

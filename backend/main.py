@@ -22,14 +22,14 @@ app = FastAPI(
 # CORS middleware for frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://localhost:3000", "http://127.0.0.1:5173"],
+    allow_origins=["http://localhost:5173", "http://localhost:5174", "http://localhost:3000", "http://127.0.0.1:5173", "http://127.0.0.1:5174"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 # Initialize data manager
-data_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+data_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data")
 data_manager = DataManager(data_dir)
 
 
@@ -37,15 +37,32 @@ class BacktestRequest(BaseModel):
     """Request model for backtesting."""
     year: str = "24"
     timeframe: str = "1h"
+    strategy_type: str = "s1"  # "s1" or "s2"
+
+    # Common parameters
     atr_period: int = 14
-    breakout_period: int = 20
-    entry_multiplier: float = 0.5
     stop_multiplier: float = 2.0
     profit_multiplier: float = 3.0
     leverage: int = 10
     risk_per_trade: float = 0.02
     initial_capital: float = 100000
     spread: float = 0.04
+
+    # S1 specific parameters
+    breakout_period: int = 20
+    entry_multiplier: float = 0.5
+
+    # S2 specific parameters
+    kc_basis_period: int = 20
+    kc_mult: float = 2.0
+    profit_mode: str = "to_basis"  # to_basis, fixed_atr, trailing
+    big_stop_multiplier: float = 0  # 0 = disabled
+    max_hold_bars: int = 100
+    trend_filter_period: int = 100
+    vol_lookback: int = 200
+    vol_ratio_max: float = 1.0
+    max_consecutive_losses: int = 3
+    cooldown_bars: int = 5
 
 
 @app.get("/")
@@ -127,14 +144,28 @@ async def run_backtest(request: BacktestRequest):
         # Initialize backtest engine
         engine = BacktestEngine(
             initial_capital=request.initial_capital,
+            strategy_type=request.strategy_type,
+            # Common parameters
             atr_period=request.atr_period,
-            breakout_period=request.breakout_period,
-            entry_multiplier=request.entry_multiplier,
             stop_multiplier=request.stop_multiplier,
             profit_multiplier=request.profit_multiplier,
             leverage=request.leverage,
             risk_per_trade=request.risk_per_trade,
             spread=request.spread,
+            # S1 specific
+            breakout_period=request.breakout_period,
+            entry_multiplier=request.entry_multiplier,
+            # S2 specific
+            kc_basis_period=request.kc_basis_period,
+            kc_mult=request.kc_mult,
+            profit_mode=request.profit_mode,
+            big_stop_multiplier=request.big_stop_multiplier,
+            max_hold_bars=request.max_hold_bars,
+            trend_filter_period=request.trend_filter_period,
+            vol_lookback=request.vol_lookback,
+            vol_ratio_max=request.vol_ratio_max,
+            max_consecutive_losses=request.max_consecutive_losses,
+            cooldown_bars=request.cooldown_bars,
         )
 
         # Run backtest
@@ -142,6 +173,7 @@ async def run_backtest(request: BacktestRequest):
 
         return {
             "success": True,
+            "strategy_type": request.strategy_type,
             "parameters": request.model_dump(),
             "metrics": result.metrics,
             "signals": result.signals,

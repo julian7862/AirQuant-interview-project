@@ -15,6 +15,10 @@ from indicators import (
     calculate_atr,
     calculate_donchian_channel,
     add_indicators,
+    calculate_ema,
+    calculate_keltner_channel,
+    calculate_historical_atr_ratio,
+    add_indicators_s2,
 )
 
 
@@ -207,6 +211,171 @@ class TestAddIndicators:
         # First value of Donchian should be NaN (shifted from previous period)
         assert pd.isna(result["dc_upper"].iloc[0])
         assert pd.isna(result["dc_lower"].iloc[0])
+
+
+class TestEMA:
+    """Tests for EMA calculation."""
+
+    @pytest.fixture
+    def sample_ohlc(self):
+        """Create sample OHLC data."""
+        return pd.DataFrame({
+            "open": [100, 102, 101, 103, 102, 104, 103, 105, 104, 106],
+            "high": [105, 107, 106, 108, 107, 109, 108, 110, 109, 111],
+            "low": [98, 100, 99, 101, 100, 102, 101, 103, 102, 104],
+            "close": [102, 101, 103, 102, 104, 103, 105, 104, 106, 105],
+        })
+
+    def test_ema_length(self, sample_ohlc):
+        """Test EMA has same length as input."""
+        ema = calculate_ema(sample_ohlc, period=5, column="close")
+        assert len(ema) == len(sample_ohlc)
+
+    def test_ema_nan_before_period(self, sample_ohlc):
+        """Test EMA is NaN before period is reached."""
+        ema = calculate_ema(sample_ohlc, period=5, column="close")
+        assert all(pd.isna(ema.iloc[:4]))
+
+    def test_ema_not_nan_after_period(self, sample_ohlc):
+        """Test EMA has values after period."""
+        ema = calculate_ema(sample_ohlc, period=5, column="close")
+        assert all(pd.notna(ema.iloc[4:]))
+
+
+class TestKeltnerChannel:
+    """Tests for Keltner Channel calculation."""
+
+    @pytest.fixture
+    def sample_ohlc(self):
+        """Create sample OHLC data with 30 bars."""
+        np.random.seed(42)
+        n = 30
+        opens = 100 + np.cumsum(np.random.randn(n) * 0.5)
+        highs = opens + np.abs(np.random.randn(n)) * 2
+        lows = opens - np.abs(np.random.randn(n)) * 2
+        closes = opens + np.random.randn(n) * 1
+
+        return pd.DataFrame({
+            "open": opens,
+            "high": highs,
+            "low": lows,
+            "close": closes,
+        })
+
+    def test_keltner_returns_tuple(self, sample_ohlc):
+        """Test Keltner returns basis, upper, and lower bands."""
+        basis, upper, lower = calculate_keltner_channel(
+            sample_ohlc, basis_period=20, atr_period=14, multiplier=2.0
+        )
+
+        assert isinstance(basis, pd.Series)
+        assert isinstance(upper, pd.Series)
+        assert isinstance(lower, pd.Series)
+
+    def test_keltner_upper_gt_basis_gt_lower(self, sample_ohlc):
+        """Test upper > basis > lower relationship."""
+        basis, upper, lower = calculate_keltner_channel(
+            sample_ohlc, basis_period=20, atr_period=14, multiplier=2.0
+        )
+
+        valid_mask = pd.notna(upper) & pd.notna(lower) & pd.notna(basis)
+        assert all(upper[valid_mask] > basis[valid_mask])
+        assert all(basis[valid_mask] > lower[valid_mask])
+
+    def test_keltner_multiplier_effect(self, sample_ohlc):
+        """Test larger multiplier gives wider bands."""
+        _, upper1, lower1 = calculate_keltner_channel(
+            sample_ohlc, basis_period=20, atr_period=14, multiplier=1.0
+        )
+        _, upper2, lower2 = calculate_keltner_channel(
+            sample_ohlc, basis_period=20, atr_period=14, multiplier=2.0
+        )
+
+        valid_mask = pd.notna(upper1) & pd.notna(upper2)
+        # With larger multiplier, bands should be wider
+        width1 = upper1[valid_mask] - lower1[valid_mask]
+        width2 = upper2[valid_mask] - lower2[valid_mask]
+        assert all(width2 > width1)
+
+
+class TestHistoricalATRRatio:
+    """Tests for historical ATR ratio calculation."""
+
+    @pytest.fixture
+    def sample_ohlc(self):
+        """Create sample OHLC data with enough bars for lookback."""
+        np.random.seed(42)
+        n = 250
+        opens = 100 + np.cumsum(np.random.randn(n) * 0.5)
+        highs = opens + np.abs(np.random.randn(n)) * 2
+        lows = opens - np.abs(np.random.randn(n)) * 2
+        closes = opens + np.random.randn(n) * 1
+
+        return pd.DataFrame({
+            "open": opens,
+            "high": highs,
+            "low": lows,
+            "close": closes,
+        })
+
+    def test_atr_ratio_length(self, sample_ohlc):
+        """Test ATR ratio has same length as input."""
+        ratio = calculate_historical_atr_ratio(sample_ohlc, atr_period=14, lookback=200)
+        assert len(ratio) == len(sample_ohlc)
+
+    def test_atr_ratio_positive(self, sample_ohlc):
+        """Test ATR ratio values are positive where valid."""
+        ratio = calculate_historical_atr_ratio(sample_ohlc, atr_period=14, lookback=200)
+        valid_ratio = ratio.dropna()
+        assert all(valid_ratio > 0)
+
+    def test_atr_ratio_around_one(self, sample_ohlc):
+        """Test ATR ratio should be around 1.0 for stable data."""
+        ratio = calculate_historical_atr_ratio(sample_ohlc, atr_period=14, lookback=200)
+        valid_ratio = ratio.dropna()
+        # Most values should be between 0.5 and 2.0
+        assert np.mean((valid_ratio > 0.3) & (valid_ratio < 3.0)) > 0.8
+
+
+class TestAddIndicatorsS2:
+    """Tests for add_indicators_s2 function."""
+
+    @pytest.fixture
+    def sample_ohlc(self):
+        """Create sample OHLC data with 250 bars."""
+        np.random.seed(42)
+        n = 250
+        opens = 100 + np.cumsum(np.random.randn(n) * 0.5)
+        highs = opens + np.abs(np.random.randn(n)) * 2
+        lows = opens - np.abs(np.random.randn(n)) * 2
+        closes = opens + np.random.randn(n) * 1
+
+        return pd.DataFrame({
+            "open": opens,
+            "high": highs,
+            "low": lows,
+            "close": closes,
+        })
+
+    def test_add_indicators_s2_columns(self, sample_ohlc):
+        """Test all S2 indicator columns are added."""
+        result = add_indicators_s2(sample_ohlc)
+
+        assert "atr" in result.columns
+        assert "kc_basis" in result.columns
+        assert "kc_upper" in result.columns
+        assert "kc_lower" in result.columns
+        assert "ema_trend" in result.columns
+        assert "atr_ratio" in result.columns
+
+    def test_add_indicators_s2_preserves_original(self, sample_ohlc):
+        """Test original OHLC columns are preserved."""
+        result = add_indicators_s2(sample_ohlc)
+
+        assert "open" in result.columns
+        assert "high" in result.columns
+        assert "low" in result.columns
+        assert "close" in result.columns
 
 
 if __name__ == "__main__":

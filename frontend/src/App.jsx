@@ -8,15 +8,32 @@ import { getOHLCV, runBacktest } from './services/api';
 const DEFAULT_PARAMS = {
   year: '24',
   timeframe: '1h',
+  strategy_type: 's1',
+
+  // Common parameters
   atr_period: 14,
-  breakout_period: 20,
-  entry_multiplier: 0.5,
   stop_multiplier: 2.0,
   profit_multiplier: 3.0,
   leverage: 10,
   risk_per_trade: 0.02,
   initial_capital: 100000,
   spread: 0.04,
+
+  // S1 specific parameters
+  breakout_period: 20,
+  entry_multiplier: 0.5,
+
+  // S2 specific parameters
+  kc_basis_period: 20,
+  kc_mult: 2.0,
+  profit_mode: 'to_basis',
+  big_stop_multiplier: 0,
+  max_hold_bars: 100,
+  trend_filter_period: 100,
+  vol_lookback: 200,
+  vol_ratio_max: 1.0,
+  max_consecutive_losses: 3,
+  cooldown_bars: 5,
 };
 
 function App() {
@@ -35,11 +52,13 @@ function App() {
     setError(null);
     try {
       const response = await getOHLCV(params.year, params.timeframe);
-      setChartData(response.data);
+      setChartData(response.data || []);
       setAtrData(response.atr || []);
     } catch (err) {
-      setError('Failed to load chart data. Make sure the backend is running.');
-      console.error(err);
+      setError('Failed to load chart data. Make sure the backend is running on port 8000.');
+      setChartData([]);
+      setAtrData([]);
+      console.error('API Error:', err);
     } finally {
       setDataLoading(false);
     }
@@ -90,7 +109,9 @@ function App() {
               USOIL ATR Backtest System
             </h1>
             <p className="text-sm text-text-secondary">
-              Interactive backtesting with ATR Breakout Strategy
+              {params.strategy_type === 's1'
+                ? 'S1: ATR Breakout Strategy'
+                : 'S2: Keltner Mean Reversion Strategy'}
             </p>
           </div>
           <div className="flex items-center gap-4">

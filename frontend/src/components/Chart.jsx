@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { createChart } from 'lightweight-charts';
+import { createChart, CandlestickSeries, LineSeries, createSeriesMarkers } from 'lightweight-charts';
 
 const Chart = ({ data, atrData, signals }) => {
   const mainChartContainerRef = useRef(null);
@@ -9,14 +9,25 @@ const Chart = ({ data, atrData, signals }) => {
   const candlestickSeriesRef = useRef(null);
   const atrSeriesRef = useRef(null);
   const priceLineRef = useRef(null);
+  const markersRef = useRef(null);
   const [lineValue, setLineValue] = useState(null);
+  const [chartError, setChartError] = useState(null);
   const isDraggingLineRef = useRef(false);
 
   // Initialize charts
   useEffect(() => {
     if (!mainChartContainerRef.current || !atrChartContainerRef.current) return;
 
-    // Time formatter function
+    let mainChart = null;
+    let atrChart = null;
+    let mainWheelHandler = null;
+    let atrWheelHandler = null;
+    let handleResize = null;
+    const mainContainer = mainChartContainerRef.current;
+    const atrContainer = atrChartContainerRef.current;
+
+    try {
+      // Time formatter function
     const formatTime = (time) => {
       const date = new Date(time * 1000);
       const year = date.getFullYear();
@@ -83,18 +94,18 @@ const Chart = ({ data, atrData, signals }) => {
     };
 
     // Create main chart
-    const mainChart = createChart(mainChartContainerRef.current, {
+    mainChart = createChart(mainContainer, {
       ...commonOptions,
-      height: mainChartContainerRef.current.clientHeight,
-      width: mainChartContainerRef.current.clientWidth,
+      height: mainContainer.clientHeight,
+      width: mainContainer.clientWidth,
       watermark: { visible: false },
     });
 
     // Create ATR chart - enable all interactions
-    const atrChart = createChart(atrChartContainerRef.current, {
+    atrChart = createChart(atrContainer, {
       ...commonOptions,
-      height: atrChartContainerRef.current.clientHeight,
-      width: atrChartContainerRef.current.clientWidth,
+      height: atrContainer.clientHeight,
+      width: atrContainer.clientWidth,
       watermark: { visible: false },
       timeScale: { ...commonOptions.timeScale, visible: true },
       handleScroll: {
@@ -111,8 +122,8 @@ const Chart = ({ data, atrData, signals }) => {
       },
     });
 
-    // Create candlestick series
-    const candlestickSeries = mainChart.addCandlestickSeries({
+    // Create candlestick series (v5 API)
+    const candlestickSeries = mainChart.addSeries(CandlestickSeries, {
       upColor: '#26a69a',
       downColor: '#ef5350',
       borderDownColor: '#ef5350',
@@ -121,14 +132,26 @@ const Chart = ({ data, atrData, signals }) => {
       wickUpColor: '#26a69a',
     });
 
-    // Create ATR line series
-    const atrSeries = atrChart.addLineSeries({
+    // Disable auto-scale for candlestick series to fix drag issues
+    candlestickSeries.priceScale().applyOptions({
+      autoScale: false,
+      scaleMargins: { top: 0.1, bottom: 0.1 },
+    });
+
+    // Create ATR line series (v5 API)
+    const atrSeries = atrChart.addSeries(LineSeries, {
       color: '#f48fb1',
       lineWidth: 2,
       priceScaleId: 'right',
       title: 'ATR',
       lastValueVisible: true,
       priceLineVisible: false,
+    });
+
+    // Disable auto-scale for ATR series to fix drag issues
+    atrSeries.priceScale().applyOptions({
+      autoScale: false,
+      scaleMargins: { top: 0.1, bottom: 0.1 },
     });
 
     mainChartRef.current = mainChart;
@@ -205,7 +228,7 @@ const Chart = ({ data, atrData, signals }) => {
     });
 
     // Handle resize
-    const handleResize = () => {
+    handleResize = () => {
       if (mainChartContainerRef.current && mainChartRef.current) {
         mainChartRef.current.applyOptions({
           width: mainChartContainerRef.current.clientWidth,
@@ -255,16 +278,37 @@ const Chart = ({ data, atrData, signals }) => {
       };
     };
 
-    const mainWheelHandler = createPriceScaleWheelHandler(mainChartContainerRef.current, mainChart);
-    const atrWheelHandler = createPriceScaleWheelHandler(atrChartContainerRef.current, atrChart);
+    mainWheelHandler = createPriceScaleWheelHandler(mainContainer, mainChart);
+    atrWheelHandler = createPriceScaleWheelHandler(atrContainer, atrChart);
 
-    mainChartContainerRef.current.addEventListener('wheel', mainWheelHandler, { passive: false });
-    atrChartContainerRef.current.addEventListener('wheel', atrWheelHandler, { passive: false });
+    mainContainer.addEventListener('wheel', mainWheelHandler, { passive: false });
+    atrContainer.addEventListener('wheel', atrWheelHandler, { passive: false });
 
+    } catch (err) {
+      console.error('Chart initialization error:', err);
+      setChartError(err.message || 'Failed to initialize chart');
+    }
+
+    // Cleanup function - always runs on unmount
     return () => {
-      window.removeEventListener('resize', handleResize);
-      mainChartContainerRef.current?.removeEventListener('wheel', mainWheelHandler);
-      atrChartContainerRef.current?.removeEventListener('wheel', atrWheelHandler);
+      if (handleResize) {
+        window.removeEventListener('resize', handleResize);
+      }
+      if (mainWheelHandler && mainContainer) {
+        mainContainer.removeEventListener('wheel', mainWheelHandler);
+      }
+      if (atrWheelHandler && atrContainer) {
+        atrContainer.removeEventListener('wheel', atrWheelHandler);
+      }
+      // Clean up markers primitive
+      if (markersRef.current) {
+        try {
+          markersRef.current.detach();
+        } catch (e) {
+          // Ignore cleanup errors
+        }
+        markersRef.current = null;
+      }
       if (mainChartRef.current) {
         mainChartRef.current.remove();
         mainChartRef.current = null;
@@ -279,27 +323,61 @@ const Chart = ({ data, atrData, signals }) => {
   // Update both charts data together to ensure alignment
   useEffect(() => {
     if (!candlestickSeriesRef.current || !atrSeriesRef.current) return;
-    if (!data || data.length === 0 || !atrData || atrData.length === 0) return;
+    if (!data || data.length === 0) return;
+
+    // Handle case where ATR data might be empty or not yet available
+    const hasValidAtrData = atrData && atrData.length > 0 && atrData.some(d => d.value !== undefined);
 
     // Set candlestick data
     candlestickSeriesRef.current.setData(data);
 
-    // Create ATR lookup map by timestamp
-    const atrMap = new Map(atrData.map(d => [d.time, d.value]));
+    // Handle ATR data if available
+    if (hasValidAtrData) {
+      // Create ATR lookup map by timestamp
+      const atrMap = new Map(atrData.map(d => [d.time, d.value]));
 
-    // Pad ATR data to match candlestick timestamps for proper alignment
-    // Use whitespace data format for bars without ATR values
-    const alignedAtrData = data.map(candle => {
-      const atrValue = atrMap.get(candle.time);
-      if (atrValue !== undefined) {
-        return { time: candle.time, value: atrValue };
-      } else {
-        // Whitespace data - just time, no value (creates gap in line)
-        return { time: candle.time };
+      // Pad ATR data to match candlestick timestamps for proper alignment
+      // Use whitespace data format for bars without ATR values
+      const alignedAtrData = data.map(candle => {
+        const atrValue = atrMap.get(candle.time);
+        if (atrValue !== undefined) {
+          return { time: candle.time, value: atrValue };
+        } else {
+          // Whitespace data - just time, no value (creates gap in line)
+          return { time: candle.time };
+        }
+      });
+
+      atrSeriesRef.current.setData(alignedAtrData);
+
+      // Remove old price line if exists
+      if (priceLineRef.current) {
+        try {
+          atrSeriesRef.current.removePriceLine(priceLineRef.current);
+        } catch (e) {
+          // Ignore if price line doesn't exist
+        }
       }
-    });
 
-    atrSeriesRef.current.setData(alignedAtrData);
+      // Create draggable price line at last valid ATR value
+      const lastValidAtr = [...atrData].reverse().find(d => d.value !== undefined);
+      if (lastValidAtr) {
+        const priceLine = atrSeriesRef.current.createPriceLine({
+          price: lastValidAtr.value,
+          color: '#ffab00',
+          lineWidth: 2,
+          lineStyle: 2,
+          axisLabelVisible: true,
+          title: '',
+        });
+
+        priceLineRef.current = priceLine;
+        setLineValue(lastValidAtr.value);
+      }
+    } else {
+      // Clear ATR series if no valid data
+      atrSeriesRef.current.setData([]);
+    }
 
     // Scroll to show most recent data (right-aligned)
     if (mainChartRef.current && atrChartRef.current) {
@@ -318,25 +396,6 @@ const Chart = ({ data, atrData, signals }) => {
         }
       }, 0);
     }
-
-    // Remove old price line if exists
-    if (priceLineRef.current) {
-      atrSeriesRef.current.removePriceLine(priceLineRef.current);
-    }
-
-    // Create draggable price line at last ATR value
-    const lastValue = atrData[atrData.length - 1].value;
-    const priceLine = atrSeriesRef.current.createPriceLine({
-      price: lastValue,
-      color: '#ffab00',
-      lineWidth: 2,
-      lineStyle: 2,
-      axisLabelVisible: true,
-      title: '',
-    });
-
-    priceLineRef.current = priceLine;
-    setLineValue(lastValue);
 
   }, [data, atrData]);
 
@@ -407,27 +466,48 @@ const Chart = ({ data, atrData, signals }) => {
     };
   }, [atrData]);
 
-  // Update markers for signals
+  // Update markers for signals (v5 API: createSeriesMarkers)
   useEffect(() => {
     if (!candlestickSeriesRef.current || !signals) return;
 
-    const markers = signals.map((signal) => {
-      const isBuy = signal.type === 'buy';
-      const isClose = signal.type.startsWith('close');
+    try {
+      const markers = signals.map((signal) => {
+        const isBuy = signal.type === 'buy';
+        const isClose = signal.type.startsWith('close');
 
-      return {
-        time: signal.time,
-        position: isBuy ? 'belowBar' : 'aboveBar',
-        color: isClose ? '#ffa726' : (isBuy ? '#26a69a' : '#ef5350'),
-        shape: isClose ? 'square' : (isBuy ? 'arrowUp' : 'arrowDown'),
-        text: isClose
-          ? (signal.reason === 'take_profit' ? 'TP' : 'SL')
-          : (isBuy ? 'BUY' : 'SELL'),
-      };
-    });
+        return {
+          time: signal.time,
+          position: isBuy ? 'belowBar' : 'aboveBar',
+          color: isClose ? '#ffa726' : (isBuy ? '#26a69a' : '#ef5350'),
+          shape: isClose ? 'square' : (isBuy ? 'arrowUp' : 'arrowDown'),
+          text: isClose
+            ? (signal.reason === 'take_profit' ? 'TP' : 'SL')
+            : (isBuy ? 'BUY' : 'SELL'),
+        };
+      });
 
-    candlestickSeriesRef.current.setMarkers(markers);
+      // v5 API: use createSeriesMarkers primitive
+      if (markersRef.current) {
+        // Update existing markers primitive
+        markersRef.current.setMarkers(markers);
+      } else {
+        // Create new markers primitive
+        markersRef.current = createSeriesMarkers(candlestickSeriesRef.current, markers);
+      }
+    } catch (err) {
+      console.warn('Failed to set markers:', err);
+    }
   }, [signals]);
+
+  // Show error if chart initialization failed
+  if (chartError) {
+    return (
+      <div className="flex flex-col h-full items-center justify-center text-red-500">
+        <p>Chart Error: {chartError}</p>
+        <p className="text-sm text-text-secondary mt-2">Please refresh the page</p>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full">
