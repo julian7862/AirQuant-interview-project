@@ -536,9 +536,17 @@ const Chart = ({ data, atrData, signals, equityCurve, drawdownCurve }) => {
 
   // Update markers for signals (v5 API: createSeriesMarkers)
   useEffect(() => {
-    if (!candlestickSeriesRef.current || !signals) return;
+    if (!candlestickSeriesRef.current) return;
 
     try {
+      // Handle empty or null signals - clear markers
+      if (!signals || signals.length === 0) {
+        if (markersRef.current) {
+          markersRef.current.setMarkers([]);
+        }
+        return;
+      }
+
       const markers = signals.map((signal) => {
         const isBuy = signal.type === 'buy';
         const isClose = signal.type.startsWith('close');
@@ -569,9 +577,15 @@ const Chart = ({ data, atrData, signals, equityCurve, drawdownCurve }) => {
 
   // Update equity curve data
   useEffect(() => {
-    if (!equitySeriesRef.current || !equityCurve || equityCurve.length === 0) return;
+    if (!equitySeriesRef.current) return;
 
     try {
+      // Handle empty or null equityCurve - clear data
+      if (!equityCurve || equityCurve.length === 0) {
+        equitySeriesRef.current.setData([]);
+        return;
+      }
+
       const equityData = equityCurve.map(point => ({
         time: point.time,
         value: point.equity,
@@ -584,9 +598,15 @@ const Chart = ({ data, atrData, signals, equityCurve, drawdownCurve }) => {
 
   // Update drawdown curve data
   useEffect(() => {
-    if (!drawdownSeriesRef.current || !drawdownCurve || drawdownCurve.length === 0) return;
+    if (!drawdownSeriesRef.current) return;
 
     try {
+      // Handle empty or null drawdownCurve - clear data
+      if (!drawdownCurve || drawdownCurve.length === 0) {
+        drawdownSeriesRef.current.setData([]);
+        return;
+      }
+
       // Set drawdown line data
       drawdownSeriesRef.current.setData(drawdownCurve);
     } catch (err) {
