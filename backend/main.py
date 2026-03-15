@@ -171,13 +171,18 @@ async def run_backtest(request: BacktestRequest):
         # Run backtest
         result = engine.run(df)
 
+        # Sample curves for performance (max ~500 points)
+        sample_step = max(1, len(result.equity_curve) // 500)
+
         return {
             "success": True,
             "strategy_type": request.strategy_type,
             "parameters": request.model_dump(),
             "metrics": result.metrics,
             "signals": result.signals,
-            "equity_curve": result.equity_curve[::max(1, len(result.equity_curve) // 500)],  # Sample for performance
+            "equity_curve": result.equity_curve[::sample_step],
+            "drawdown_curve": result.drawdown_curve[::sample_step],
+            "drawdown_markers": result.drawdown_markers,
             "total_signals": len(result.signals),
         }
 

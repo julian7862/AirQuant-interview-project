@@ -1,13 +1,17 @@
 import React, { useEffect, useRef, useState } from 'react';
 import { createChart, CandlestickSeries, LineSeries, createSeriesMarkers } from 'lightweight-charts';
 
-const Chart = ({ data, atrData, signals }) => {
+const Chart = ({ data, atrData, signals, equityCurve, drawdownCurve }) => {
   const mainChartContainerRef = useRef(null);
   const atrChartContainerRef = useRef(null);
+  const equityChartContainerRef = useRef(null);  // Combined equity + drawdown chart
   const mainChartRef = useRef(null);
   const atrChartRef = useRef(null);
+  const equityChartRef = useRef(null);  // Combined chart ref
   const candlestickSeriesRef = useRef(null);
   const atrSeriesRef = useRef(null);
+  const equitySeriesRef = useRef(null);
+  const drawdownSeriesRef = useRef(null);  // Drawdown on same chart, right scale
   const priceLineRef = useRef(null);
   const markersRef = useRef(null);
   const [lineValue, setLineValue] = useState(null);
@@ -16,15 +20,18 @@ const Chart = ({ data, atrData, signals }) => {
 
   // Initialize charts
   useEffect(() => {
-    if (!mainChartContainerRef.current || !atrChartContainerRef.current) return;
+    if (!mainChartContainerRef.current || !atrChartContainerRef.current ||
+        !equityChartContainerRef.current) return;
 
     let mainChart = null;
     let atrChart = null;
+    let equityChart = null;  // Combined equity + drawdown chart
     let mainWheelHandler = null;
     let atrWheelHandler = null;
     let handleResize = null;
     const mainContainer = mainChartContainerRef.current;
     const atrContainer = atrChartContainerRef.current;
+    const equityContainer = equityChartContainerRef.current;
 
     try {
       // Time formatter function
@@ -154,80 +161,129 @@ const Chart = ({ data, atrData, signals }) => {
       scaleMargins: { top: 0.1, bottom: 0.1 },
     });
 
+    // Create combined Equity + Drawdown Chart with dual price scales
+    // Disable price scale interactions (no zoom needed for equity/dd)
+    equityChart = createChart(equityContainer, {
+      ...commonOptions,
+      height: equityContainer.clientHeight,
+      width: equityContainer.clientWidth,
+      watermark: { visible: false },
+      timeScale: { ...commonOptions.timeScale, visible: true },
+      handleScale: {
+        axisPressedMouseMove: false,  // Disable price scale drag zoom
+        axisDoubleClickReset: false,
+        mouseWheel: true,  // Keep time scale wheel zoom
+        pinch: true,
+      },
+      leftPriceScale: {
+        visible: true,
+        borderColor: '#2a2e39',
+        scaleMargins: { top: 0.15, bottom: 0.15 },  // More padding for lines
+      },
+      rightPriceScale: {
+        visible: true,
+        borderColor: '#2a2e39',
+        scaleMargins: { top: 0.15, bottom: 0.15 },  // More padding for lines
+      },
+    });
+
+    // Equity series on LEFT price scale (USD)
+    const equitySeries = equityChart.addSeries(LineSeries, {
+      color: '#4caf50',  // Green
+      lineWidth: 2,
+      priceScaleId: 'left',
+      title: 'Equity',
+      lastValueVisible: true,
+      priceLineVisible: false,
+    });
+
+    // Keep autoScale true for equity series with more padding
+    equitySeries.priceScale().applyOptions({
+      autoScale: true,
+      scaleMargins: { top: 0.15, bottom: 0.15 },
+    });
+
+    // Drawdown series on RIGHT price scale (%)
+    const drawdownSeries = equityChart.addSeries(LineSeries, {
+      color: '#f44336',  // Red
+      lineWidth: 2,
+      priceScaleId: 'right',
+      title: 'DD%',
+      lastValueVisible: true,
+      priceLineVisible: false,
+    });
+
+    // Keep autoScale true for drawdown series with more padding
+    drawdownSeries.priceScale().applyOptions({
+      autoScale: true,
+      scaleMargins: { top: 0.15, bottom: 0.15 },
+    });
+
     mainChartRef.current = mainChart;
     atrChartRef.current = atrChart;
+    equityChartRef.current = equityChart;  // Combined chart
     candlestickSeriesRef.current = candlestickSeries;
     atrSeriesRef.current = atrSeries;
+    equitySeriesRef.current = equitySeries;
+    drawdownSeriesRef.current = drawdownSeries;  // On same chart as equity
 
-    // Sync time scales - simple logical range sync with error handling
+    // Sync time scales for all 3 charts
     let isSyncingTimeScale = false;
+    const allCharts = [mainChart, atrChart, equityChart];
 
-    mainChart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
+    const syncTimeScale = (sourceChart, range) => {
       if (isSyncingTimeScale || !range || isDraggingLineRef.current) return;
       try {
         isSyncingTimeScale = true;
-        atrChart.timeScale().setVisibleLogicalRange(range);
+        allCharts.forEach(chart => {
+          if (chart !== sourceChart) {
+            chart.timeScale().setVisibleLogicalRange(range);
+          }
+        });
       } catch (e) {
         console.warn('Sync error:', e);
       } finally {
         isSyncingTimeScale = false;
       }
-    });
+    };
 
-    atrChart.timeScale().subscribeVisibleLogicalRangeChange((range) => {
-      if (isSyncingTimeScale || !range || isDraggingLineRef.current) return;
-      try {
-        isSyncingTimeScale = true;
-        mainChart.timeScale().setVisibleLogicalRange(range);
-      } catch (e) {
-        console.warn('Sync error:', e);
-      } finally {
-        isSyncingTimeScale = false;
-      }
-    });
+    mainChart.timeScale().subscribeVisibleLogicalRangeChange((range) => syncTimeScale(mainChart, range));
+    atrChart.timeScale().subscribeVisibleLogicalRangeChange((range) => syncTimeScale(atrChart, range));
+    equityChart.timeScale().subscribeVisibleLogicalRangeChange((range) => syncTimeScale(equityChart, range));
 
-    // Sync crosshair
+    // Sync crosshair for all 3 charts
     let isSyncing = false;
 
-    mainChart.subscribeCrosshairMove((param) => {
+    const syncCrosshair = (sourceChart, param, sourceSeries) => {
       if (isSyncing) return;
       isSyncing = true;
 
       if (param.time !== undefined) {
-        const dataPoint = param.seriesData.get(candlestickSeries);
-        const atrPoint = param.seriesData.get(atrSeries);
-        if (dataPoint) {
-          // Use ATR value if available, otherwise use close price for positioning
-          const priceForPosition = atrPoint?.value ?? dataPoint.close;
-          atrChart.setCrosshairPosition(priceForPosition, param.time, atrSeries);
-        }
-      } else {
-        atrChart.clearCrosshairPosition();
-      }
-
-      isSyncing = false;
-    });
-
-    atrChart.subscribeCrosshairMove((param) => {
-      if (isSyncing) return;
-      isSyncing = true;
-
-      if (param.time !== undefined) {
-        const atrPoint = param.seriesData.get(atrSeries);
-        if (atrPoint?.value !== undefined) {
-          mainChart.setCrosshairPosition(atrPoint.value, param.time, candlestickSeries);
-        } else {
-          // If no ATR value at this time, still sync crosshair position using time
+        // Sync to all other charts
+        if (sourceChart !== mainChart) {
           mainChart.setCrosshairPosition(0, param.time, candlestickSeries);
         }
+        if (sourceChart !== atrChart) {
+          atrChart.setCrosshairPosition(0, param.time, atrSeries);
+        }
+        if (sourceChart !== equityChart) {
+          equityChart.setCrosshairPosition(0, param.time, equitySeries);
+        }
       } else {
-        mainChart.clearCrosshairPosition();
+        // Clear all crosshairs
+        if (sourceChart !== mainChart) mainChart.clearCrosshairPosition();
+        if (sourceChart !== atrChart) atrChart.clearCrosshairPosition();
+        if (sourceChart !== equityChart) equityChart.clearCrosshairPosition();
       }
 
       isSyncing = false;
-    });
+    };
 
-    // Handle resize
+    mainChart.subscribeCrosshairMove((param) => syncCrosshair(mainChart, param, candlestickSeries));
+    atrChart.subscribeCrosshairMove((param) => syncCrosshair(atrChart, param, atrSeries));
+    equityChart.subscribeCrosshairMove((param) => syncCrosshair(equityChart, param, equitySeries));
+
+    // Handle resize for all 3 charts
     handleResize = () => {
       if (mainChartContainerRef.current && mainChartRef.current) {
         mainChartRef.current.applyOptions({
@@ -239,6 +295,12 @@ const Chart = ({ data, atrData, signals }) => {
         atrChartRef.current.applyOptions({
           width: atrChartContainerRef.current.clientWidth,
           height: atrChartContainerRef.current.clientHeight,
+        });
+      }
+      if (equityChartContainerRef.current && equityChartRef.current) {
+        equityChartRef.current.applyOptions({
+          width: equityChartContainerRef.current.clientWidth,
+          height: equityChartContainerRef.current.clientHeight,
         });
       }
     };
@@ -300,7 +362,7 @@ const Chart = ({ data, atrData, signals }) => {
       if (atrWheelHandler && atrContainer) {
         atrContainer.removeEventListener('wheel', atrWheelHandler);
       }
-      // Clean up markers primitive
+      // Clean up markers primitives
       if (markersRef.current) {
         try {
           markersRef.current.detach();
@@ -309,6 +371,7 @@ const Chart = ({ data, atrData, signals }) => {
         }
         markersRef.current = null;
       }
+      // Clean up all 3 charts
       if (mainChartRef.current) {
         mainChartRef.current.remove();
         mainChartRef.current = null;
@@ -316,6 +379,10 @@ const Chart = ({ data, atrData, signals }) => {
       if (atrChartRef.current) {
         atrChartRef.current.remove();
         atrChartRef.current = null;
+      }
+      if (equityChartRef.current) {
+        equityChartRef.current.remove();
+        equityChartRef.current = null;
       }
     };
   }, []);
@@ -391,6 +458,7 @@ const Chart = ({ data, atrData, signals }) => {
 
           mainChartRef.current?.timeScale().setVisibleLogicalRange(range);
           atrChartRef.current?.timeScale().setVisibleLogicalRange(range);
+          equityChartRef.current?.timeScale().setVisibleLogicalRange(range);
         } catch (e) {
           console.warn('Range error:', e);
         }
@@ -499,6 +567,33 @@ const Chart = ({ data, atrData, signals }) => {
     }
   }, [signals]);
 
+  // Update equity curve data
+  useEffect(() => {
+    if (!equitySeriesRef.current || !equityCurve || equityCurve.length === 0) return;
+
+    try {
+      const equityData = equityCurve.map(point => ({
+        time: point.time,
+        value: point.equity,
+      }));
+      equitySeriesRef.current.setData(equityData);
+    } catch (err) {
+      console.warn('Failed to set equity data:', err);
+    }
+  }, [equityCurve]);
+
+  // Update drawdown curve data
+  useEffect(() => {
+    if (!drawdownSeriesRef.current || !drawdownCurve || drawdownCurve.length === 0) return;
+
+    try {
+      // Set drawdown line data
+      drawdownSeriesRef.current.setData(drawdownCurve);
+    } catch (err) {
+      console.warn('Failed to set drawdown data:', err);
+    }
+  }, [drawdownCurve]);
+
   // Show error if chart initialization failed
   if (chartError) {
     return (
@@ -511,23 +606,39 @@ const Chart = ({ data, atrData, signals }) => {
 
   return (
     <div className="flex flex-col h-full">
-      {/* Main Chart (70%) */}
+      {/* Main Chart (50%) */}
       <div
         ref={mainChartContainerRef}
         className="w-full"
-        style={{ height: '70%', minHeight: '300px' }}
+        style={{ height: '50%', minHeight: '200px' }}
       />
 
       {/* Divider */}
       <div className="h-px bg-border" />
 
-      {/* ATR Sub-Chart (30%) */}
-      <div className="relative" style={{ height: '30%', minHeight: '120px' }}>
-        <div className="absolute top-2 left-2 z-10 text-xs text-text-secondary bg-chart-bg/80 px-2 py-1 rounded">
+      {/* ATR Sub-Chart (18%) */}
+      <div className="relative" style={{ height: '18%', minHeight: '80px' }}>
+        <div className="absolute top-1 left-2 z-10 text-xs text-text-secondary bg-chart-bg/80 px-2 py-0.5 rounded">
           ATR (14) | <span className="text-amber-400">Threshold: {lineValue?.toFixed(4) || '-'}</span>
         </div>
         <div
           ref={atrChartContainerRef}
+          className="w-full h-full"
+        />
+      </div>
+
+      {/* Divider */}
+      <div className="h-px bg-border" />
+
+      {/* Combined Equity + Drawdown Chart (32%) */}
+      <div className="relative" style={{ height: '32%', minHeight: '120px' }}>
+        <div className="absolute top-1 z-10 text-xs text-text-secondary bg-chart-bg/80 px-2 py-0.5 rounded" style={{ left: '70px' }}>
+          <span className="text-green-400">Equity (USD)</span>
+          <span className="mx-2">|</span>
+          <span className="text-red-400">Drawdown (%)</span>
+        </div>
+        <div
+          ref={equityChartContainerRef}
           className="w-full h-full"
         />
       </div>

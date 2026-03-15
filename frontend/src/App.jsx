@@ -41,6 +41,9 @@ function App() {
   const [chartData, setChartData] = useState([]);
   const [atrData, setAtrData] = useState([]);
   const [signals, setSignals] = useState([]);
+  const [equityCurve, setEquityCurve] = useState([]);
+  const [drawdownCurve, setDrawdownCurve] = useState([]);
+  const [drawdownMarkers, setDrawdownMarkers] = useState(null);
   const [metrics, setMetrics] = useState(null);
   const [loading, setLoading] = useState(false);
   const [dataLoading, setDataLoading] = useState(true);
@@ -74,6 +77,9 @@ function App() {
     setParams((prev) => ({ ...prev, timeframe }));
     setSignals([]);
     setMetrics(null);
+    setEquityCurve([]);
+    setDrawdownCurve([]);
+    setDrawdownMarkers(null);
   };
 
   // Handle year change
@@ -81,6 +87,9 @@ function App() {
     setParams((prev) => ({ ...prev, year }));
     setSignals([]);
     setMetrics(null);
+    setEquityCurve([]);
+    setDrawdownCurve([]);
+    setDrawdownMarkers(null);
   };
 
   // Run backtest
@@ -89,8 +98,11 @@ function App() {
     setError(null);
     try {
       const response = await runBacktest(params);
-      setSignals(response.signals);
+      setSignals(response.signals || []);
       setMetrics(response.metrics);
+      setEquityCurve(response.equity_curve || []);
+      setDrawdownCurve(response.drawdown_curve || []);
+      setDrawdownMarkers(response.drawdown_markers || null);
     } catch (err) {
       setError('Backtest failed. Please check your parameters.');
       console.error(err);
@@ -172,6 +184,9 @@ function App() {
                 data={chartData}
                 atrData={atrData}
                 signals={signals}
+                equityCurve={equityCurve}
+                drawdownCurve={drawdownCurve}
+                drawdownMarkers={drawdownMarkers}
               />
             )}
           </div>

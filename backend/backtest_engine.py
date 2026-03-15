@@ -17,6 +17,8 @@ class BacktestResult:
     trades: list[Trade]
     signals: list[dict]
     equity_curve: list[dict]
+    drawdown_curve: list[dict]  # [{time, value (%)}, ...]
+    drawdown_markers: dict  # {start, bottom, recovered}
     metrics: dict
     final_capital: float
     initial_capital: float
@@ -123,6 +125,9 @@ class BacktestEngine:
         # Simulate trading
         trades, equity_curve = self._simulate_trades(df_with_signals, signals)
 
+        # Calculate drawdown curve and markers
+        drawdown_curve, drawdown_markers = self._calculate_drawdown_curve(equity_curve)
+
         # Calculate metrics
         metrics = self._calculate_metrics(trades, equity_curve)
 
@@ -141,6 +146,8 @@ class BacktestEngine:
             trades=trades,
             signals=signals_dict,
             equity_curve=equity_curve,
+            drawdown_curve=drawdown_curve,
+            drawdown_markers=drawdown_markers,
             metrics=metrics,
             final_capital=equity_curve[-1]["equity"] if equity_curve else self.initial_capital,
             initial_capital=self.initial_capital,
@@ -232,6 +239,93 @@ class BacktestEngine:
             })
 
         return trades, equity_curve
+
+    def _calculate_drawdown_curve(
+        self,
+        equity_curve: list[dict]
+    ) -> tuple[list[dict], dict]:
+        """
+        Calculate drawdown curve and identify max drawdown markers.
+
+        Returns:
+            Tuple of (drawdown_curve, drawdown_markers)
+            - drawdown_curve: list of {time, value} where value is drawdown percentage
+            - drawdown_markers: {start, bottom, recovered} timestamps for max drawdown
+        """
+        if not equity_curve:
+            return [], {"start": None, "bottom": None, "recovered": None}
+
+        drawdown_curve = []
+        peak_equity = self.initial_capital
+        peak_time = equity_curve[0]["time"]
+
+        # Track max drawdown info
+        max_dd_value = 0.0
+        max_dd_start = None
+        max_dd_bottom = None
+        max_dd_recovered = None
+
+        # Current drawdown tracking
+        current_dd_start = None
+        in_drawdown = False
+
+        for point in equity_curve:
+            equity = point["equity"]
+            current_time = point["time"]
+
+            # Update peak if new high
+            if equity > peak_equity:
+                # Check if we recovered from a drawdown that was the max
+                if in_drawdown and max_dd_bottom and not max_dd_recovered:
+                    if current_dd_start == max_dd_start:
+                        max_dd_recovered = current_time
+
+                peak_equity = equity
+                peak_time = current_time
+                in_drawdown = False
+                current_dd_start = None
+
+            # Calculate current drawdown
+            dd = (peak_equity - equity) / peak_equity if peak_equity > 0 else 0
+
+            # Track if we're entering a drawdown
+            if dd > 0 and not in_drawdown:
+                in_drawdown = True
+                current_dd_start = peak_time
+
+            # Update max drawdown markers
+            if dd > max_dd_value:
+                max_dd_value = dd
+                max_dd_start = current_dd_start
+                max_dd_bottom = current_time
+                max_dd_recovered = None  # Reset recovery since we found new bottom
+
+            drawdown_curve.append({
+                "time": current_time,
+                "value": round(dd * 100, 2)  # Convert to percentage
+            })
+
+        # Check for recovery after loop
+        if max_dd_bottom and not max_dd_recovered:
+            # Check if final equity recovered past the peak before max drawdown
+            final_equity = equity_curve[-1]["equity"]
+            # Find peak at max_dd_start
+            for i, point in enumerate(equity_curve):
+                if point["time"] == max_dd_bottom:
+                    # Look forward for recovery
+                    for j in range(i + 1, len(equity_curve)):
+                        if equity_curve[j]["equity"] >= peak_equity:
+                            max_dd_recovered = equity_curve[j]["time"]
+                            break
+                    break
+
+        drawdown_markers = {
+            "start": max_dd_start,
+            "bottom": max_dd_bottom,
+            "recovered": max_dd_recovered
+        }
+
+        return drawdown_curve, drawdown_markers
 
     def _calculate_metrics(
         self,

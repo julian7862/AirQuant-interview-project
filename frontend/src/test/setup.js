@@ -13,6 +13,10 @@ vi.mock('lightweight-charts', () => ({
       removePriceLine: vi.fn(),
       priceToCoordinate: vi.fn(() => 100),
       coordinateToPrice: vi.fn(() => 0.5),
+      priceScale: vi.fn(() => ({
+        applyOptions: vi.fn(),
+        options: vi.fn(() => ({ scaleMargins: { top: 0.1, bottom: 0.1 } })),
+      })),
     })),
     timeScale: vi.fn(() => ({
       subscribeVisibleLogicalRangeChange: vi.fn(),
