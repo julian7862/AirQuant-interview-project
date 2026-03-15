@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { createChart, CandlestickSeries, LineSeries, createSeriesMarkers } from 'lightweight-charts';
+import { createChart, CandlestickSeries, LineSeries, HistogramSeries, createSeriesMarkers } from 'lightweight-charts';
 
 const Chart = ({ data, atrData, signals, equityCurve, drawdownCurve }) => {
   const mainChartContainerRef = useRef(null);
@@ -12,6 +12,7 @@ const Chart = ({ data, atrData, signals, equityCurve, drawdownCurve }) => {
   const atrSeriesRef = useRef(null);
   const equitySeriesRef = useRef(null);
   const drawdownSeriesRef = useRef(null);  // Drawdown on same chart, right scale
+  const positionSeriesRef = useRef(null);  // Position histogram
   const priceLineRef = useRef(null);
   const markersRef = useRef(null);
   const [lineValue, setLineValue] = useState(null);
@@ -219,6 +220,20 @@ const Chart = ({ data, atrData, signals, equityCurve, drawdownCurve }) => {
       scaleMargins: { top: 0.15, bottom: 0.15 },
     });
 
+    // Position histogram series (background indicator)
+    const positionSeries = equityChart.addSeries(HistogramSeries, {
+      priceScaleId: 'position',
+      priceFormat: { type: 'volume' },
+      lastValueVisible: false,
+      priceLineVisible: false,
+    });
+
+    // Configure position price scale (hidden, just for layout)
+    equityChart.priceScale('position').applyOptions({
+      scaleMargins: { top: 0.85, bottom: 0 },  // Small area at bottom
+      visible: false,
+    });
+
     mainChartRef.current = mainChart;
     atrChartRef.current = atrChart;
     equityChartRef.current = equityChart;  // Combined chart
@@ -226,6 +241,7 @@ const Chart = ({ data, atrData, signals, equityCurve, drawdownCurve }) => {
     atrSeriesRef.current = atrSeries;
     equitySeriesRef.current = equitySeries;
     drawdownSeriesRef.current = drawdownSeries;  // On same chart as equity
+    positionSeriesRef.current = positionSeries;  // Position histogram
 
     // Sync time scales for all 3 charts
     let isSyncingTimeScale = false;
@@ -614,6 +630,32 @@ const Chart = ({ data, atrData, signals, equityCurve, drawdownCurve }) => {
     }
   }, [drawdownCurve]);
 
+  // Update position histogram data (from equityCurve)
+  useEffect(() => {
+    if (!positionSeriesRef.current) return;
+
+    try {
+      // Handle empty or null equityCurve - clear data
+      if (!equityCurve || equityCurve.length === 0) {
+        positionSeriesRef.current.setData([]);
+        return;
+      }
+
+      // Create histogram data with colors based on position
+      const positionData = equityCurve
+        .filter(point => point.position !== 0)  // Only show when in position
+        .map(point => ({
+          time: point.time,
+          value: 1,  // Fixed height
+          color: point.position === 1 ? 'rgba(38, 166, 154, 0.4)' : 'rgba(239, 83, 80, 0.4)',  // Green for long, red for short
+        }));
+
+      positionSeriesRef.current.setData(positionData);
+    } catch (err) {
+      console.warn('Failed to set position data:', err);
+    }
+  }, [equityCurve]);
+
   // Show error if chart initialization failed
   if (chartError) {
     return (
@@ -656,6 +698,11 @@ const Chart = ({ data, atrData, signals, equityCurve, drawdownCurve }) => {
           <span className="text-green-400">Equity (USD)</span>
           <span className="mx-2">|</span>
           <span className="text-red-400">Drawdown (%)</span>
+          <span className="mx-2">|</span>
+          <span className="text-text-secondary">Position: </span>
+          <span className="text-green-400/60">Long</span>
+          <span className="text-text-secondary">/</span>
+          <span className="text-red-400/60">Short</span>
         </div>
         <div
           ref={equityChartContainerRef}

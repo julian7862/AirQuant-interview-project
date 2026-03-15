@@ -40,6 +40,7 @@ vi.mock('lightweight-charts', () => ({
   })),
   CandlestickSeries: 'CandlestickSeries',
   LineSeries: 'LineSeries',
+  HistogramSeries: 'HistogramSeries',
 }));
 
 // Mock ResizeObserver

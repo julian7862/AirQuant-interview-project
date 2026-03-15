@@ -20,9 +20,9 @@ describe('Chart Component', () => {
   ];
 
   const mockEquityCurve = [
-    { time: 1704157200, equity: 100000, capital: 100000 },
-    { time: 1704160800, equity: 100500, capital: 100500 },
-    { time: 1704164400, equity: 101200, capital: 101200 },
+    { time: 1704157200, equity: 100000, capital: 100000, position: 0 },
+    { time: 1704160800, equity: 100500, capital: 100500, position: 1 },
+    { time: 1704164400, equity: 101200, capital: 101200, position: 0 },
   ];
 
   const mockDrawdownCurve = [
@@ -127,6 +127,7 @@ describe('Chart Component Error Handling', () => {
       time: 1704157200 + i * 3600,
       equity: 100000 + i * 10,
       capital: 100000 + i * 10,
+      position: i % 3 === 0 ? 1 : (i % 3 === 1 ? -1 : 0),  // Alternate positions
     }));
     const largeDrawdown = Array.from({ length: 1000 }, (_, i) => ({
       time: 1704157200 + i * 3600,

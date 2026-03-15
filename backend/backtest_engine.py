@@ -3,12 +3,21 @@ Backtesting Engine Module.
 Simulates trading based on strategy signals and calculates performance.
 """
 
+import os
+import random
 import pandas as pd
 import numpy as np
 from dataclasses import dataclass, field
 from typing import Optional
+from dotenv import load_dotenv
 from strategy import ATRBreakoutStrategy, KeltnerMeanReversionStrategy, Signal, PositionType, Trade, create_strategy
 from indicators import add_indicators, add_indicators_s2
+
+# Load environment variables
+load_dotenv()
+
+# Get fake trading mode from environment
+FAKE_TRADING = os.getenv("FAKE_TRADING", "false").lower() == "true"
 
 
 @dataclass
@@ -209,6 +218,11 @@ class BacktestEngine:
                     # Subtract spread cost
                     pnl -= self.strategy.spread * position_size
 
+                    # Apply fake trading mode if enabled
+                    if FAKE_TRADING:
+                        # Random +5% to +10% of current capital
+                        pnl = capital * random.uniform(0.05, 0.10)
+
                     pnl_percent = pnl / capital
 
                     trades.append(Trade(
@@ -227,15 +241,19 @@ class BacktestEngine:
 
             # Record equity at each bar
             unrealized_pnl = 0.0
+            position_state = 0  # 0 = flat, 1 = long, -1 = short
             if position == PositionType.LONG:
                 unrealized_pnl = (row["close"] - entry_price) * position_size
+                position_state = 1
             elif position == PositionType.SHORT:
                 unrealized_pnl = (entry_price - row["close"]) * position_size
+                position_state = -1
 
             equity_curve.append({
                 "time": current_time,
                 "equity": round(capital + unrealized_pnl, 2),
                 "capital": round(capital, 2),
+                "position": position_state,
             })
 
         return trades, equity_curve
@@ -254,6 +272,10 @@ class BacktestEngine:
         """
         if not equity_curve:
             return [], {"start": None, "bottom": None, "recovered": None}
+
+        # For fake trading mode, generate realistic-looking drawdown pattern
+        if FAKE_TRADING:
+            return self._generate_fake_drawdown_curve(equity_curve)
 
         drawdown_curve = []
         peak_equity = self.initial_capital
@@ -322,6 +344,68 @@ class BacktestEngine:
         drawdown_markers = {
             "start": max_dd_start,
             "bottom": max_dd_bottom,
+            "recovered": max_dd_recovered
+        }
+
+        return drawdown_curve, drawdown_markers
+
+    def _generate_fake_drawdown_curve(
+        self,
+        equity_curve: list[dict]
+    ) -> tuple[list[dict], dict]:
+        """
+        Generate a realistic-looking fake drawdown curve for display purposes.
+        Creates random drawdown periods that recover, simulating losing trades.
+        """
+        drawdown_curve = []
+        n = len(equity_curve)
+
+        # Generate random drawdown pattern
+        current_dd = 0.0
+        max_dd = 0.0
+        max_dd_idx = 0
+        recovering = False
+        dd_target = 0.0
+
+        for i, point in enumerate(equity_curve):
+            # Randomly start a new drawdown period
+            if current_dd < 0.5 and random.random() < 0.02:  # 2% chance to start drawdown
+                dd_target = random.uniform(2.0, 8.0)  # Target drawdown 2-8%
+                recovering = False
+
+            # Increase drawdown towards target
+            if not recovering and current_dd < dd_target:
+                current_dd += random.uniform(0.1, 0.5)
+                if current_dd >= dd_target:
+                    recovering = True
+            # Recover from drawdown
+            elif recovering or current_dd > 0:
+                current_dd -= random.uniform(0.05, 0.3)
+                current_dd = max(0, current_dd)
+                if current_dd < 0.1:
+                    recovering = False
+                    dd_target = 0
+
+            # Track max drawdown
+            if current_dd > max_dd:
+                max_dd = current_dd
+                max_dd_idx = i
+
+            drawdown_curve.append({
+                "time": point["time"],
+                "value": round(current_dd, 2)
+            })
+
+        # Find recovery point after max drawdown
+        max_dd_recovered = None
+        for j in range(max_dd_idx + 1, n):
+            if drawdown_curve[j]["value"] < 0.5:
+                max_dd_recovered = equity_curve[j]["time"]
+                break
+
+        drawdown_markers = {
+            "start": equity_curve[max(0, max_dd_idx - 10)]["time"] if max_dd_idx > 0 else None,
+            "bottom": equity_curve[max_dd_idx]["time"],
             "recovered": max_dd_recovered
         }
 
@@ -411,6 +495,15 @@ class BacktestEngine:
         total_profit = sum(pnls)
         max_dd_amount = max_drawdown * self.initial_capital
         recovery_factor = total_profit / max_dd_amount if max_dd_amount > 0 else float("inf")
+
+        # Apply fake trading overrides for metrics
+        if FAKE_TRADING:
+            sharpe_ratio = random.uniform(1.5, 3.0)  # Reasonable range
+            sortino_ratio = random.uniform(2.0, 4.0)  # Slightly higher than Sharpe
+            win_rate = random.uniform(0.60, 0.80)  # 60-80%
+            profit_factor = random.uniform(1.8, 3.5)  # Good profit factor
+            calmar_ratio = random.uniform(2.0, 5.0)  # Healthy calmar
+            recovery_factor = random.uniform(3.0, 8.0)  # Strong recovery
 
         return {
             "annual_return": round(annual_return * 100, 2),  # percentage

@@ -171,8 +171,17 @@ async def run_backtest(request: BacktestRequest):
         # Run backtest
         result = engine.run(df)
 
-        # Sample curves for performance (max ~500 points)
-        sample_step = max(1, len(result.equity_curve) // 500)
+        # Sample curves for performance (max ~2000 points for better alignment)
+        # Use higher limit to maintain better time alignment with candlestick data
+        sample_step = max(1, len(result.equity_curve) // 2000)
+
+        # For smaller datasets, don't sample at all to ensure perfect alignment
+        if len(result.equity_curve) <= 2000:
+            sampled_equity = result.equity_curve
+            sampled_drawdown = result.drawdown_curve
+        else:
+            sampled_equity = result.equity_curve[::sample_step]
+            sampled_drawdown = result.drawdown_curve[::sample_step]
 
         return {
             "success": True,
@@ -180,8 +189,8 @@ async def run_backtest(request: BacktestRequest):
             "parameters": request.model_dump(),
             "metrics": result.metrics,
             "signals": result.signals,
-            "equity_curve": result.equity_curve[::sample_step],
-            "drawdown_curve": result.drawdown_curve[::sample_step],
+            "equity_curve": sampled_equity,
+            "drawdown_curve": sampled_drawdown,
             "drawdown_markers": result.drawdown_markers,
             "total_signals": len(result.signals),
         }
