@@ -65,6 +65,7 @@ const Chart = ({ data, atrData, signals, equityCurve, drawdownCurve }) => {
       rightPriceScale: {
         borderColor: '#2a2e39',
         scaleMargins: { top: 0.1, bottom: 0.1 },
+        autoScale: false,
       },
       timeScale: {
         borderColor: '#2a2e39',
@@ -90,7 +91,10 @@ const Chart = ({ data, atrData, signals, equityCurve, drawdownCurve }) => {
         vertTouchDrag: true,
       },
       handleScale: {
-        axisPressedMouseMove: true,
+        axisPressedMouseMove: {
+          time: true,
+          price: true,
+        },
         axisDoubleClickReset: true,
         mouseWheel: true,
         pinch: true,
@@ -123,7 +127,10 @@ const Chart = ({ data, atrData, signals, equityCurve, drawdownCurve }) => {
         vertTouchDrag: true,
       },
       handleScale: {
-        axisPressedMouseMove: true,
+        axisPressedMouseMove: {
+          time: true,
+          price: true,
+        },
         axisDoubleClickReset: true,
         mouseWheel: true,
         pinch: true,
